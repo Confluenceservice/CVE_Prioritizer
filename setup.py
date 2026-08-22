@@ -26,7 +26,8 @@ setup(
         'python-dotenv',
         'jinja2',
         'termcolor',
-        'click'
+        'click',
+        'fade'
     ],
     entry_points={
         'console_scripts': [
