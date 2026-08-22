@@ -15,7 +15,7 @@
 /misc/logs.txt
 cve_prioritizer_logs.txt
 .env
-test_*
+/test_*
 current_*
 .idea/
 # AWS User-specific

@@ -25,6 +25,9 @@ dependencies = [
 requires-python = ">=3.8"
 keywords = ["CVE", "CVSS", "EPSS", "CISA", "Prioritize", "Vulnerability"]
 
+[project.optional-dependencies]
+test = ["pytest"]
+
 [project.scripts]
 cve-prioritizer = "cve_prioritizer.cve_prioritizer:main"
 cve_prioritizer = "cve_prioritizer.cve_prioritizer:main"
