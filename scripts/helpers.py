@@ -55,6 +55,7 @@ def _get_kev_catalog():
 
     return _kev_catalog
 
+
 # FIRST.org returns at most 100 rows per response, and 100 comma-separated IDs keeps the
 # query around 1.4 KB - well under the roughly 2 KB point past which the API stops
 # returning rows and answers "status": "OK" with "total": 0 instead of erroring.
