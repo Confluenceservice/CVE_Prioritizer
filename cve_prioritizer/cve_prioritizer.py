@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone
 
 from scripts.constants import LOGO, SIMPLE_HEADER, VERBOSE_HEADER
-from scripts.helpers import parse_report, update_env_file, worker
+from scripts.helpers import epss_batch_prefetch, parse_report, update_env_file, worker
 
 load_dotenv()
 Throttle_msg = ''
@@ -112,6 +112,10 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
                      "product,vector" + "\n")
 
     results = []
+
+    # One batched EPSS lookup per 100 CVEs, instead of one request per worker thread
+    epss_batch_prefetch(cve_list)
+
     for cve in cve_list:
         throttle = 1
         if len(cve_list) > 75 and not os.getenv('NIST_API') and not api and not vulncheck:
