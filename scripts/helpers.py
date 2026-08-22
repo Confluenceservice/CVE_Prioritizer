@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import threading
 import requests
 import click
 from dotenv import load_dotenv
@@ -27,6 +28,32 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# CISA KEV catalog, downloaded at most once per run and shared by every worker thread
+_kev_catalog = None
+_kev_catalog_lock = threading.Lock()
+
+
+def _get_kev_catalog():
+    """
+    Return CISA's KEV catalog as a {cveID: entry} mapping, fetching it at most once per run.
+
+    Callers previously downloaded the multi-MB feed once per KEV-listed CVE. The double-checked
+    lock keeps the concurrent workers from all starting that download at the same time; a failed
+    fetch is deliberately not cached, so the exception reaches the caller's existing handler
+    exactly as it did before and the next CVE retries.
+    """
+    global _kev_catalog
+
+    if _kev_catalog is None:
+        with _kev_catalog_lock:
+            if _kev_catalog is None:
+                kev_data = requests.get(CISA_KEV_URL)
+                kev_data.raise_for_status()
+                _kev_catalog = {entry.get('cveID'): entry
+                                for entry in kev_data.json().get('vulnerabilities', [])}
+
+    return _kev_catalog
 
 
 # Collect EPSS Scores
@@ -88,12 +115,9 @@ def nist_check(cve_id, api_key, cvss_version):
                 exploit_maturity_attacked = False
                 ransomware = ''
                 if cisa_kev:
-                    kev_data = requests.get(CISA_KEV_URL)
-                    kev_data.raise_for_status()
-                    kev_list = kev_data.json()
-                    for entry in kev_list.get('vulnerabilities', []):
-                        if entry.get('cveID') == cve_id:
-                            ransomware = str(entry.get('knownRansomwareCampaignUse')).upper()
+                    kev_entry = _get_kev_catalog().get(cve_id)
+                    if kev_entry:
+                        ransomware = str(kev_entry.get('knownRansomwareCampaignUse')).upper()
 
                 cpe = unique_cve.get("cve").get("configurations", [{}])[0].get("nodes", [{}])[0].get("cpeMatch", [{}])[0].get("criteria", 'cpe:2.3:::::::::::')
 
@@ -205,9 +229,7 @@ def vulncheck_check(cve_id, api_key, kev_check, cvss_version):
 
         response_data = vulncheck_response.json()
         if response_data.get("_meta", {}).get("total_documents", 0) > 0:
-            kev_data = requests.get(CISA_KEV_URL)
-            kev_data.raise_for_status()
-            kev_list = kev_data.json()
+            kev_catalog = _get_kev_catalog()
 
             for unique_cve in response_data.get("data", []):
                 vc_kev = False
@@ -217,9 +239,9 @@ def vulncheck_check(cve_id, api_key, kev_check, cvss_version):
                     vc_kev, vc_used_by_ransomware = vulncheck_kev(unique_cve.get('id'), api_key)
                 elif unique_cve.get("cisaExploitAdd"):
                     vc_kev = True
-                    for entry in kev_list.get('vulnerabilities', []):
-                        if entry.get('cveID') == cve_id:
-                            vc_used_by_ransomware = str(entry.get('knownRansomwareCampaignUse')).upper()
+                    kev_entry = kev_catalog.get(cve_id)
+                    if kev_entry:
+                        vc_used_by_ransomware = str(kev_entry.get('knownRansomwareCampaignUse')).upper()
 
                 cpe = unique_cve.get("configurations", [{}])[0].get("nodes", [{}])[0].get("cpeMatch", [{}])[0].get("criteria", 'cpe:2.3:::::::::::')
 
