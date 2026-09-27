@@ -122,7 +122,7 @@ def test_csv_quotes_reason_and_keeps_existing_columns(tmp_path, fake_apis, sleep
     assert rows[0][:15] == ["cve_id", "priority", "epss", "epss_percentile", "cvss", "cvss_version",
                             "cvss_severity", "kev", "ransomware", "exploited", "kev_source", "cpe", "vendor",
                             "product", "vector"]  # original columns keep their positions
-    assert rows[0][-1] == "reason"
+    assert rows[0][-2:] == ["reason", "due_date"]
     assert len(rows[1]) == len(rows[0])  # the "; " and "," inside reason didn't split the row
     assert rows[1][0] == "CVE-2021-44228" and rows[1][1] == "Priority 1"
 

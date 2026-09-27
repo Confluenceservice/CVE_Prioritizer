@@ -11,7 +11,8 @@ __status__ = "Production"
 #
 # A CVE's priority (P1+ ... P4) describes the vulnerability and doesn't change here.
 # Asset context decides the *fix order* of findings: priority first, then internet exposure,
-# then business criticality.
+# then business criticality. A policy file (--policy) can additionally raise a finding's own
+# priority ("finding_priority") because of its host.
 
 import csv
 import ipaddress
@@ -20,6 +21,8 @@ import re
 import xml.etree.ElementTree as ET
 
 import click
+
+from scripts import policy
 
 logger = logging.getLogger(__name__)
 
@@ -249,19 +252,26 @@ def build_fix_order(findings, results_by_cve, inventory=None):
         context = f"{_exposure_text(internet_facing)} host"
         if criticality:
             context += f" (criticality: {criticality})"
+        # Policy may raise the priority of this finding because of its host (off by default)
+        finding_priority, escalation = policy.host_escalation(result['priority'], internet_facing, criticality)
+        reason = f"{result['priority']} on {context}"
+        if escalation:
+            reason += f", {escalation}"
         rows.append({
             'host': finding['host'],
             'ip': finding['ip'],
             'port': finding['port'],
             'cve_id': finding['cve_id'],
             'priority': result['priority'],
+            'finding_priority': finding_priority,
+            'due_date': policy.due_date(finding_priority),
             'internet_facing': {True: 'TRUE', False: 'FALSE', None: ''}[internet_facing],
             'criticality': criticality or '',
             'owner': asset.get('owner', ''),
             'in_inventory': 'TRUE' if asset else 'FALSE',
             'cvss_base_score': result.get('cvss_base_score'),
             'epss': result.get('epss'),
-            'reason': f"{result['priority']} on {context}; {result.get('reason', '')}".rstrip('; '),
+            'reason': f"{reason}; {result.get('reason', '')}".rstrip('; '),
         })
 
     def score(value):
@@ -272,7 +282,7 @@ def build_fix_order(findings, results_by_cve, inventory=None):
 
     def fix_order_key(row):
         internet_facing = {'TRUE': True, 'FALSE': False, '': None}[row['internet_facing']]
-        return (PRIORITY_ORDER.get(row['priority'], len(PRIORITY_ORDER)),
+        return (PRIORITY_ORDER.get(row['finding_priority'], len(PRIORITY_ORDER)),
                 EXPOSURE_ORDER[internet_facing],
                 CRITICALITY_ORDER.get(row['criticality'] or None, 2),
                 score(row['cvss_base_score']),
@@ -286,7 +296,7 @@ def build_fix_order(findings, results_by_cve, inventory=None):
 
 
 HOST_CSV_FIELDS = ['rank', 'host', 'ip', 'port', 'cve_id', 'priority', 'internet_facing', 'criticality', 'owner',
-                   'in_inventory', 'cvss_base_score', 'epss', 'reason']
+                   'in_inventory', 'cvss_base_score', 'epss', 'reason', 'finding_priority', 'due_date']
 
 
 def write_fix_order_csv(file, rows):
@@ -301,10 +311,13 @@ def print_fix_order(rows, limit=20):
     if not rows:
         return
     click.echo(f"\nFix order by host (top {min(limit, len(rows))} of {len(rows)} findings)")
-    click.echo(f"{'#':<5}{'HOST':<32}{'CVE-ID':<18}{'PRIORITY':<10}{'EXPOSURE':<18}CRITICALITY")
-    click.echo("-" * 95)
+    click.echo(f"{'#':<5}{'HOST':<32}{'CVE-ID':<18}{'PRIORITY':<10}{'EXPOSURE':<18}{'CRITICALITY':<13}DUE")
+    click.echo("-" * 106)
     for row in rows[:limit]:
         exposure = {'TRUE': 'internet-facing', 'FALSE': 'internal', '': 'unknown'}[row['internet_facing']]
         host = row['host'] if len(row['host']) <= 30 else row['host'][:27] + '...'
-        click.echo(f"{row['rank']:<5}{host:<32}{row['cve_id']:<18}{row['priority']:<10}{exposure:<18}"
-                   f"{row['criticality'] or 'unknown'}")
+        # Shows the finding's priority; "P2>P1" when the policy raised it for this host
+        shown = row['finding_priority'] if row['finding_priority'] == row['priority'] \
+            else f"{row['priority']}>{row['finding_priority']}"
+        click.echo(f"{row['rank']:<5}{host:<32}{row['cve_id']:<18}{shown:<10}{exposure:<18}"
+                   f"{row['criticality'] or 'unknown':<13}{row['due_date']}")

@@ -1,0 +1,43 @@
+# CVE Prioritizer scoring policy
+# Copy this file, adjust it to your organisation, and run with: --policy my_policy.yaml
+# Every key is optional. Anything left out keeps the tool's default behaviour.
+# Unknown keys are rejected, so a typo can't silently fall back to a default.
+
+# CVSS / EPSS cutoffs for the P1-P4 quadrants. --cvss / --epss on the command line override these.
+thresholds:
+  cvss: 6.0
+  epss: 0.2
+
+# Which evidence of real-world exploitation makes a CVE P1+ (all on by default).
+# The kev / exploited columns always report the facts, whatever is set here.
+exploitation:
+  kev: true              # listed in CISA KEV (or VulnCheck KEV)
+  cvss4_attacked: true   # CVSS v4 exploit maturity "Attacked"
+  ssvc_active: true      # CISA SSVC exploitation "active"
+
+# Raise a CVE to at least this priority when a signal is present (P1, P2 or P3; empty = off).
+# Also applies to Unscored CVEs: a strong signal is enough to act before scores exist.
+minimum_priority:
+  public_exploit: P1     # a public Nuclei exploit template exists
+  epss_rising:           # EPSS rose by 0.1 or more in 7 days
+  ssvc_poc: P2           # CISA SSVC exploitation "poc"
+
+# Raise a finding's priority by N levels because of the host it is on (needs --assets).
+# The CVE's own priority is unchanged; the finding gets "finding_priority", which sets the fix order.
+# Levels add up and stop at P1 (P1+ always needs exploitation evidence).
+host_escalation:
+  internet_facing: 1
+  criticality:
+    critical: 1
+    high: 0
+    medium: 0
+    low: 0
+
+# Days to fix each priority. Adds a due_date to CVE results and host findings.
+sla_days:
+  P1+: 7
+  P1: 14
+  P2: 30
+  P3: 60
+  P4: 180
+  UNSCORED: 14

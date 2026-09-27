@@ -188,7 +188,19 @@ To use CVE_Prioritizer effectively, follow these steps:
      python3 cve_prioritizer.py -f scan.nessus --nessus --assets assets.csv -j last.json --baseline last.json
      ```
    - The changes appear in the terminal, under `changes` in the JSON output, and at the top of the HTML report.
-7. Speed up repeat scans with the local cache:
+7. Encode your organisation's rules in a **scoring policy** with `--policy my_policy.yaml`
+   (start from [`policy.example.yaml`](policy.example.yaml)). Every key is optional; without a policy the results
+   are unchanged.
+   - `thresholds`: CVSS/EPSS cutoffs. `--cvss` / `--epss` on the command line still win.
+   - `exploitation`: which evidence makes a CVE P1+ (KEV, CVSS v4 "Attacked", CISA SSVC "active").
+   - `minimum_priority`: e.g. `public_exploit: P1` raises any CVE with a public exploit to at least P1.
+   - `host_escalation`: e.g. `internet_facing: 1` raises findings on internet-facing hosts by one level
+   (never above P1). The CVE keeps its priority; the finding gets a `finding_priority` that sets the fix order,
+   shown as `P2>P1` in the terminal.
+   - `sla_days`: days to fix each priority; adds a `due_date` to CVEs and host findings.
+   - Typos and invalid values are rejected with a message naming the key, so a mistake can't silently fall back to
+   a default. The policy used is recorded in the JSON output's metadata.
+8. Speed up repeat scans with the local cache:
    - NIST NVD records are cached in `~/.cache/cve_prioritizer/nvd.sqlite` (or `$XDG_CACHE_HOME/cve_prioritizer/`),
    so re-running a scan skips the NVD requests and their rate-limit delay. Only scored records are cached.
    - Cached records expire after 24 hours by default; change this with `--cache-ttl <hours>`.

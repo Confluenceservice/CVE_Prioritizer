@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone
 
 from scripts.constants import LOGO, SIMPLE_HEADER, VERBOSE_HEADER
-from scripts import cache
+from scripts import cache, policy
 from scripts.assets import (build_fix_order, load_assets, parse_csv_findings, parse_nessus_findings,
                             parse_openvas_findings, print_fix_order, write_fix_order_csv)
 from scripts.diff import compare, load_baseline, print_changes
@@ -33,10 +33,10 @@ Throttle_msg = ''
 @click.command()
 @click.option('-a', '--api', type=str, help='Your API Key')
 @click.option('-c', '--cve', type=str, help='Unique CVE-ID')
-@click.option('-e', '--epss', type=float, default=0.2, help='EPSS threshold (Default 0.2)')
+@click.option('-e', '--epss', type=float, help='EPSS threshold (Default 0.2, or the policy file value)')
 @click.option('-f', '--file', type=click.File('r'), help='TXT file with CVEs (One per Line)')
 @click.option('-j', '--json_file', type=click.Path(), required=False, help='JSON output')
-@click.option('-n', '--cvss', type=float, default=6.0, help='CVSS threshold (Default 6.0)')
+@click.option('-n', '--cvss', type=float, help='CVSS threshold (Default 6.0, or the policy file value)')
 @click.option('-o', '--output', type=click.File('w'), help='Output filename')
 @click.option('-t', '--threads', type=int, default=100, help='Number of concurrent threads')
 @click.option('-v', '--verbose', is_flag=True, help='Verbose mode')
@@ -56,6 +56,8 @@ Throttle_msg = ''
 @click.option('--assets', type=click.File('r'),
               help='Asset CSV (host,criticality,internet_facing,owner) to order findings by exposure and criticality')
 @click.option('--hosts-output', type=click.File('w'), help='Write the per-host fix order to this CSV file')
+@click.option('--policy', 'policy_file', type=click.Path(exists=True, dir_okay=False),
+              help='YAML scoring policy: thresholds, exploitation rules, host escalation, SLAs (see policy.example.yaml)')
 @click.option('--baseline', type=click.Path(dir_okay=False),
               help='Earlier JSON output (-j) to compare with; reports new KEV entries, EPSS spikes, fixed findings...')
 @click.option('--report', type=click.Choice(['html', 'pdf']), help='Generate a report in HTML or PDF format')
@@ -65,7 +67,7 @@ Throttle_msg = ''
               help='Hours a cached NIST NVD record stays fresh')
 def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, set_api, vulncheck, vulncheck_kev,
          json_file, nessus, openvas, report, cvss_version, cvelistv5, cvelist_path, no_cache, cache_ttl, ssvc,
-         findings_csv, assets, hosts_output, baseline):
+         findings_csv, assets, hosts_output, baseline, policy_file):
 
     # Global Arguments
     color_enabled = not no_color
@@ -73,8 +75,15 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
 
     # standard args
     header = VERBOSE_HEADER if verbose else SIMPLE_HEADER
-    epss_threshold = epss
-    cvss_threshold = cvss
+    # Scoring policy: command-line thresholds win over the policy file, which wins over the defaults
+    try:
+        rules = policy.load(policy_file) if policy_file else policy.validate(None)
+    except (policy.PolicyError, OSError) as e:
+        click.echo(f"Error in policy file {policy_file}: {e}")
+        exit(1)
+    policy.configure(rules)
+    epss_threshold = epss if epss is not None else rules['thresholds']['epss']
+    cvss_threshold = cvss if cvss is not None else rules['thresholds']['cvss']
     sem = Semaphore(threads)
     # Read the baseline before anything is written, so "-j last.json --baseline last.json" compares
     # with the previous run and then replaces it
@@ -192,6 +201,8 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
         'total_cves': len(cve_list),
         'cvss_threshold': cvss_threshold,
         'epss_threshold': epss_threshold,
+        'policy_file': policy_file or '',
+        'policy': rules,
     }
     output_data = {
         'metadata': metadata,
