@@ -15,7 +15,9 @@ import requests
 import click
 from dotenv import load_dotenv
 from termcolor import colored
+from scripts import cache
 from scripts.constants import EPSS_URL, NIST_BASE_URL, VULNCHECK_BASE_URL, VULNCHECK_KEV_BASE_URL, CISA_KEV_URL, CVELIST_RAW_BASE
+from scripts.net import http_get
 import xml.etree.ElementTree as ET
 
 load_dotenv()
@@ -91,7 +93,7 @@ def get_cisa_kev():
     with _kev_lock:
         if _kev_cache is None:
             try:
-                response = requests.get(CISA_KEV_URL, timeout=30)
+                response = http_get(CISA_KEV_URL)
                 response.raise_for_status()
                 _kev_cache = {entry.get('cveID'): entry
                               for entry in response.json().get('vulnerabilities', [])}
@@ -109,14 +111,53 @@ def kev_ransomware(cve_id):
     return str(entry.get('knownRansomwareCampaignUse')).upper() if entry else ''
 
 
+# The EPSS API accepts a comma-separated list of CVEs and returns up to 100 rows per request
+EPSS_BATCH_SIZE = 100
+
+# {cve_id: {"epss": .., "percentile": ..}} or {cve_id: None} when EPSS has no score for it
+_epss_cache = {}
+_epss_lock = threading.Lock()
+
+
+def prefetch_epss(cve_ids):
+    """
+    Fetches EPSS scores for many CVEs in batches of EPSS_BATCH_SIZE (one request per 100 CVEs
+    instead of one per CVE). A failed batch is skipped; epss_check then falls back to single lookups.
+    """
+    ids = sorted(set(cve_ids))
+    for start in range(0, len(ids), EPSS_BATCH_SIZE):
+        batch = ids[start:start + EPSS_BATCH_SIZE]
+        try:
+            response = http_get(EPSS_URL + f"?cve={','.join(batch)}&limit={len(batch)}")
+            response.raise_for_status()
+            found = {row.get("cve"): {"epss": float(row.get("epss")), "percentile": float(row.get("percentile"))}
+                     for row in response.json().get("data", [])}
+        except (requests.exceptions.RequestException, ValueError, TypeError) as err:
+            logger.warning(f"EPSS batch lookup failed, falling back to single lookups: {err}")
+            continue
+        with _epss_lock:
+            for cve_id in batch:
+                _epss_cache[cve_id] = found.get(cve_id)
+
+
 # Collect EPSS Scores
 def epss_check(cve_id):
     """
-    Function collects EPSS from FIRST.org
+    Function collects EPSS from FIRST.org, using prefetched batch results when available
     """
+    with _epss_lock:
+        prefetched = cve_id in _epss_cache
+        cached = _epss_cache.get(cve_id)
+    if prefetched:
+        if cached is None:
+            logger.warning(f"{cve_id} - Not Found in EPSS.")
+            click.echo(f"{cve_id:<18}Not Found in EPSS.")
+            return {"epss": None, "percentile": None}
+        return dict(cached)
+
     try:
         epss_url = EPSS_URL + f"?cve={cve_id}"
-        epss_response = requests.get(epss_url)
+        epss_response = http_get(epss_url)
         epss_response.raise_for_status()
 
         response_data = epss_response.json()
@@ -148,6 +189,25 @@ def epss_check(cve_id):
     return {"epss": None, "percentile": None}
 
 
+def _nvd_cacheable(response_data):
+    """
+    Only cache records NVD has scored. Unscored ones ("Awaiting Analysis") are likely to change
+    soon, so they are always fetched fresh.
+    """
+    for vulnerability in response_data.get("vulnerabilities") or []:
+        metrics = (vulnerability.get("cve") or {}).get("metrics") or {}
+        if any(key.startswith("cvssMetric") and value for key, value in metrics.items()):
+            return True
+    return False
+
+
+def nvd_cached(cve_id):
+    """
+    True when a fresh NVD record for cve_id is in the local cache (no API call or throttling needed).
+    """
+    return cache.get(cve_id) is not None
+
+
 # Check NIST NVD for the CVE
 def nist_check(cve_id, api_key, cvss_version):
     """
@@ -158,10 +218,14 @@ def nist_check(cve_id, api_key, cvss_version):
         nvd_url = NIST_BASE_URL + f"?cveId={cve_id}"
         headers = {'apiKey': nvd_key} if nvd_key else {}
 
-        nvd_response = requests.get(nvd_url, headers=headers)
-        nvd_response.raise_for_status()
+        response_data = cache.get(cve_id)
+        if response_data is None:
+            nvd_response = http_get(nvd_url, nvd=True, headers=headers)
+            nvd_response.raise_for_status()
 
-        response_data = nvd_response.json()
+            response_data = nvd_response.json()
+            if _nvd_cacheable(response_data):
+                cache.put(cve_id, response_data)
         if response_data.get("totalResults") > 0:
             for unique_cve in response_data.get("vulnerabilities"):
                 cisa_kev = unique_cve.get("cve").get("cisaExploitAdd", False)
@@ -273,7 +337,7 @@ def vulncheck_check(cve_id, api_key, kev_check, cvss_version):
         header = {"accept": "application/json"}
         params = {"token": vulncheck_key}
 
-        vulncheck_response = requests.get(vulncheck_url, headers=header, params=params)
+        vulncheck_response = http_get(vulncheck_url, headers=header, params=params)
         vulncheck_response.raise_for_status()
 
         response_data = vulncheck_response.json()
@@ -390,7 +454,7 @@ def vulncheck_kev(cve_id, api_key):
 
         # Check if API has been provided
         if vulncheck_key:
-            vulncheck_response = requests.get(vulncheck_url, headers=header, params=params).json()
+            vulncheck_response = http_get(vulncheck_url, headers=header, params=params).json()
 
             if vulncheck_response.get('data'):
                 vc_exploited = True
@@ -459,7 +523,7 @@ def cvelist_check(cve_id, local_base_path=None):
                 data = json.load(f)
         else:
             url = f"{CVELIST_RAW_BASE}/{year}/{block}/CVE-{year}-{cve_id.split('-')[2]}.json"
-            resp = requests.get(url)
+            resp = http_get(url)
             if resp.status_code != 200:
                 click.echo(f"{cve_id:<18}Not Found in CVE List V5.")
                 logger.warning(f"{cve_id} - Not Found in CVE List V5.")

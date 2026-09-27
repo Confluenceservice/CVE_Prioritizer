@@ -56,7 +56,7 @@ def test_kev_catalog_downloaded_once_across_threads(monkeypatch):
         calls.append(url)
         return FakeResponse(KEV_FEED)
 
-    monkeypatch.setattr(helpers.requests, "get", fake_get)
+    monkeypatch.setattr(helpers, "http_get", fake_get)
 
     out = []
     threads = [threading.Thread(target=lambda: out.append(kev_ransomware("CVE-2021-44228"))) for _ in range(20)]
@@ -78,7 +78,7 @@ def test_kev_download_failure_is_not_retried(monkeypatch):
         calls.append(url)
         raise requests.exceptions.ConnectionError("offline")
 
-    monkeypatch.setattr(helpers.requests, "get", fake_get)
+    monkeypatch.setattr(helpers, "http_get", fake_get)
 
     assert kev_ransomware("CVE-2021-44228") == ""
     assert kev_ransomware("CVE-2021-44228") == ""

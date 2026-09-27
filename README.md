@@ -141,6 +141,13 @@ To use CVE_Prioritizer effectively, follow these steps:
    - Define custom thresholds with `--cvss` and/or `--epss` to align the results with your organization's
    risk appetite.
    - Define the number of concurrent threads with `-t` or `--threads` (default: 100).
+5. Speed up repeat scans with the local cache:
+   - NIST NVD records are cached in `~/.cache/cve_prioritizer/nvd.sqlite` (or `$XDG_CACHE_HOME/cve_prioritizer/`),
+   so re-running a scan skips the NVD requests and their rate-limit delay. Only scored records are cached.
+   - Cached records expire after 24 hours by default; change this with `--cache-ttl <hours>`.
+   - Use `--no-cache` to always fetch fresh NVD data.
+   - EPSS scores are always fetched fresh (one request per 100 CVEs), and failed requests are retried
+   automatically with backoff.
 
 ### Examples
 
