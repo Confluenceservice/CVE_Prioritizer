@@ -1,0 +1,22 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        # The tests exercise scripts/helpers.py, so the CLI-only banner dependency (fade) is not needed
+        run: pip install click python-dotenv requests termcolor jinja2 pytest
+      - name: Run tests
+        run: python -m pytest -v
