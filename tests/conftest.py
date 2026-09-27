@@ -6,11 +6,13 @@ from scripts import cache, helpers
 @pytest.fixture(autouse=True)
 def isolate(monkeypatch, tmp_path):
     """
-    Each test starts with empty KEV/EPSS caches, its own NVD cache file, and no real network.
+    Each test starts with empty KEV/EPSS/Nuclei caches, its own NVD cache file, and no real network.
     Tests that need HTTP patch helpers.http_get themselves.
     """
     helpers._kev_cache = None
     helpers._epss_cache.clear()
+    helpers._nuclei_ids = None
+    helpers._nuclei_loaded = False
     cache.configure(enabled=True, ttl_hours=24, path=str(tmp_path / "nvd.sqlite"))
 
     def no_network(url, **kwargs):
@@ -20,3 +22,5 @@ def isolate(monkeypatch, tmp_path):
     yield
     helpers._kev_cache = None
     helpers._epss_cache.clear()
+    helpers._nuclei_ids = None
+    helpers._nuclei_loaded = False

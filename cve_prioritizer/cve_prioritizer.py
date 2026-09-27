@@ -19,7 +19,8 @@ from datetime import datetime, timezone
 
 from scripts.constants import LOGO, SIMPLE_HEADER, VERBOSE_HEADER
 from scripts import cache
-from scripts.helpers import is_valid_cve, nvd_cached, parse_report, prefetch_epss, update_env_file, worker
+from scripts.helpers import (is_valid_cve, nvd_cached, parse_report, prefetch_epss, update_env_file, worker,
+                             write_csv_header)
 
 load_dotenv()
 Throttle_msg = ''
@@ -43,7 +44,9 @@ Throttle_msg = ''
 @click.option('-vck', '--vulncheck_kev', is_flag=True, help='Use Vulncheck KEV - Requires VulnCheck API')
 @click.option('--cvelistv5', is_flag=True, help='Use CVE List V5 (cvelistV5) as source')
 @click.option('--cvelist-path', type=click.Path(exists=True, file_okay=False), required=False,
-              help='Local path to cvelistV5 mirror for offline/fast lookups')
+              help='Local path to cvelistV5 mirror for offline/fast lookups (used by --cvelistv5 and --ssvc)')
+@click.option('--ssvc', is_flag=True,
+              help="Add CISA's SSVC assessment from cvelistV5 (already included with --cvelistv5)")
 @click.option('--nessus', is_flag=True, help='Parse Nessus file')
 @click.option('--openvas', is_flag=True, help='Parse OpenVAS file')
 @click.option('--report', type=click.Choice(['html', 'pdf']), help='Generate a report in HTML or PDF format')
@@ -52,7 +55,7 @@ Throttle_msg = ''
 @click.option('--cache-ttl', type=click.FloatRange(min=0), default=cache.DEFAULT_TTL_HOURS, show_default=True,
               help='Hours a cached NIST NVD record stays fresh')
 def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, set_api, vulncheck, vulncheck_kev,
-         json_file, nessus, openvas, report, cvss_version, cvelistv5, cvelist_path, no_cache, cache_ttl):
+         json_file, nessus, openvas, report, cvss_version, cvelistv5, cvelist_path, no_cache, cache_ttl, ssvc):
 
     # Global Arguments
     color_enabled = not no_color
@@ -112,8 +115,7 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
         click.echo(faded_text + header)
 
     if output:
-        output.write("cve_id,priority,epss,epss_percentile,cvss,cvss_version,cvss_severity,kev,ransomware,exploited,kev_source,cpe,vendor,"
-                     "product,vector" + "\n")
+        write_csv_header(output)
 
     # Normalise once so the EPSS prefetch and the workers see the same IDs
     cve_list = [c.strip().upper() for c in cve_list]
@@ -142,7 +144,7 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
             sem.acquire()
             t = threading.Thread(target=worker, args=(cve, cvss_threshold, epss_threshold, verbose,
                                                       sem, color_enabled, cvss_version, output, api, vulncheck,
-                                                      vulncheck_kev, results, cvelistv5, cvelist_path))
+                                                      vulncheck_kev, results, cvelistv5, cvelist_path, ssvc))
             threads.append(t)
             t.start()
             time.sleep(throttle)

@@ -11,9 +11,10 @@ EMPTY_NVD = {
 }
 
 
-def run_worker(monkeypatch, nvd_result, epss_result, verbose=True):
+def run_worker(monkeypatch, nvd_result, epss_result, verbose=True, public_exploit=False):
     monkeypatch.setattr(helpers, "nist_check", lambda *args: nvd_result)
     monkeypatch.setattr(helpers, "epss_check", lambda *args: epss_result)
+    monkeypatch.setattr(helpers, "has_public_exploit", lambda cve_id: public_exploit)
     csv = io.StringIO()
     results = []
     helpers.worker("CVE-2025-0001", 6.0, 0.2, verbose, Semaphore(), False, 3,

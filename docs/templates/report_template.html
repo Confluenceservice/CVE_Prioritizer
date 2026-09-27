@@ -96,11 +96,15 @@
         <p>Total CVEs</p>
     </div>
     {% set priorities = {} %}
-    {% set kev_total = 0 %}
+    {# A plain {% set %} inside a for loop doesn't survive the loop in Jinja; a namespace does #}
+    {% set totals = namespace(kev=0, exploit=0) %}
     {% for cve in cves %}
         {% set _ = priorities.update({cve.priority: priorities.get(cve.priority, 0) + 1}) %}
         {% if cve.kev == "TRUE" %}
-            {% set kev_total = kev_total + 1 %}
+            {% set totals.kev = totals.kev + 1 %}
+        {% endif %}
+        {% if cve.public_exploit == "TRUE" %}
+            {% set totals.exploit = totals.exploit + 1 %}
         {% endif %}
     {% endfor %}
     {% for level, count in priorities.items()|sort %}
@@ -110,8 +114,12 @@
     </div>
     {% endfor %}
     <div class="card">
-        <h2>{{ kev_total }}</h2>
+        <h2>{{ totals.kev }}</h2>
         <p>Listed in KEV</p>
+    </div>
+    <div class="card">
+        <h2>{{ totals.exploit }}</h2>
+        <p>Public Exploit</p>
     </div>
 </div>
 
@@ -127,9 +135,10 @@
                 <th>EPSS Percentile</th>
                 <th>KEV</th>
                 <th>KEV Source</th>
+                <th>Public Exploit</th>
                 <th>Vendor</th>
                 <th>Product</th>
-                <th>CPE</th>
+                <th>Why</th>
             </tr>
         </thead>
         <tbody>
@@ -143,9 +152,10 @@
                     {{ '✅' if cve.kev == 'TRUE' else '—' }}
                 </td>
                 <td>{{ cve.kev_source }}</td>
+                <td>{{ {'TRUE': 'Yes', 'FALSE': 'No'}.get(cve.public_exploit, 'Unknown') }}</td>
                 <td>{{ cve.vendor or '' }}</td>
                 <td>{{ cve.product or '' }}</td>
-                <td>{{ cve.cpe }}</td>
+                <td>{{ cve.reason }}</td>
             </tr>
             {% endfor %}
         </tbody>
