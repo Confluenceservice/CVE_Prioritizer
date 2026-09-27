@@ -16,6 +16,7 @@
 cve_prioritizer_logs.txt
 .env
 test_*
+!tests/test_*.py
 current_*
 .idea/
 # AWS User-specific
