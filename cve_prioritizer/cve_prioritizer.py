@@ -9,7 +9,6 @@ __status__ = "Production"
 import fade
 import json
 import os
-import re
 import threading
 import time
 from threading import Semaphore
@@ -19,7 +18,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone
 
 from scripts.constants import LOGO, SIMPLE_HEADER, VERBOSE_HEADER
-from scripts.helpers import parse_report, update_env_file, worker
+from scripts.helpers import is_valid_cve, parse_report, update_env_file, worker
 
 load_dotenv()
 Throttle_msg = ''
@@ -83,14 +82,14 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
     if cve:
         cve_list.append(cve)
     elif list:
-        cve_list = list.split(',')
+        cve_list = [c.strip() for c in list.split(',') if c.strip()]
     elif file:
         if nessus:
             cve_list = parse_report(file, 'nessus')
         elif openvas:
             cve_list = parse_report(file, 'openvas')
         else:
-            cve_list = [line.rstrip() for line in file]
+            cve_list = [line.strip() for line in file if line.strip()]
 
     if not api and not os.getenv('NIST_API') and not vulncheck and not cvelistv5:
         if len(cve_list) > 75:
@@ -123,11 +122,12 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
             exit()
         elif cvelistv5:
             throttle = 0.1
-        if not re.match(r'(CVE|cve-\d{4}-\d+$)', cve):
+        cve = cve.strip().upper()
+        if not is_valid_cve(cve):
             click.echo(f'{cve} Error: CVEs should be provided in the standard format CVE-0000-0000*')
         else:
             sem.acquire()
-            t = threading.Thread(target=worker, args=(cve.upper().strip(), cvss_threshold, epss_threshold, verbose,
+            t = threading.Thread(target=worker, args=(cve, cvss_threshold, epss_threshold, verbose,
                                                       sem, color_enabled, cvss_version, output, api, vulncheck,
                                                       vulncheck_kev, results, cvelistv5, cvelist_path))
             threads.append(t)
