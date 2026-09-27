@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<report id="r1" format_id="a994b278-1f62-11e1-96ac-406186ea4fc5" extension="xml" content_type="text/xml">
+<report id="r1">
+<results start="1" max="100">
+<result id="res1">
+<name>Palo Alto PAN-OS GlobalProtect Command Injection</name>
+<host>198.51.100.7<asset asset_id="a1"/><hostname>vpn.corp.example</hostname></host>
+<port>443/tcp</port>
+<nvt oid="1.3.6.1.4.1.25623.1.0.151900">
+<type>nvt</type>
+<name>PAN-OS GlobalProtect Command Injection</name>
+<refs><ref type="cve" id="CVE-2024-3400"/><ref type="url" id="https://security.paloaltonetworks.com/CVE-2024-3400"/></refs>
+</nvt>
+<severity>10.0</severity>
+</result>
+<result id="res2">
+<name>Legacy OpenVAS result format</name>
+<host>10.0.9.4</host>
+<port>general/tcp</port>
+<nvt oid="1.3.6.1.4.1.25623.1.0.100000">
+<name>libwebp heap overflow</name>
+<cve>CVE-2023-4863, CVE-2023-5129</cve>
+</nvt>
+</result>
+<result id="res3">
+<name>OS Detection</name>
+<host>10.0.9.4</host>
+<port>general/tcp</port>
+<nvt oid="1.3.6.1.4.1.25623.1.0.105937"><name>OS Detection Consolidation</name><cve>NOCVE</cve></nvt>
+</result>
+</results>
+</report>
+</report>

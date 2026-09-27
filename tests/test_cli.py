@@ -122,6 +122,44 @@ def test_csv_quotes_reason_and_keeps_existing_columns(tmp_path, fake_apis, sleep
     assert rows[0][:15] == ["cve_id", "priority", "epss", "epss_percentile", "cvss", "cvss_version",
                             "cvss_severity", "kev", "ransomware", "exploited", "kev_source", "cpe", "vendor",
                             "product", "vector"]  # original columns keep their positions
-    assert rows[0][-1] == "reason"
+    assert rows[0][-2:] == ["reason", "due_date"]
     assert len(rows[1]) == len(rows[0])  # the "; " and "," inside reason didn't split the row
     assert rows[1][0] == "CVE-2021-44228" and rows[1][1] == "Priority 1"
+
+
+def test_nessus_scan_with_assets_produces_fix_order(tmp_path, fake_apis, sleeps):
+    import csv
+    from pathlib import Path
+
+    fixtures = Path(__file__).parent / "fixtures"
+    out_json = tmp_path / "out.json"
+    hosts_csv = tmp_path / "hosts.csv"
+    result = CliRunner().invoke(cli.main, [
+        "-f", str(fixtures / "sample.nessus"), "--nessus",
+        "--assets", str(fixtures / "assets.csv"),
+        "--hosts-output", str(hosts_csv), "-j", str(out_json),
+    ], env={"XDG_CACHE_HOME": str(tmp_path / "cache")})
+    assert result.exit_code == 0, result.output
+
+    # Every CVE scores P1 with the fake APIs, so exposure and criticality decide the order
+    assert "Fix order by host (top 4 of 4 findings)" in result.output
+    rows = list(csv.DictReader(hosts_csv.open()))
+    assert [(r["rank"], r["host"], r["port"], r["internet_facing"], r["criticality"]) for r in rows] == [
+        ("1", "web01.corp.example", "443/tcp", "TRUE", "critical"),
+        ("2", "web01.corp.example", "443/tcp", "TRUE", "critical"),
+        ("3", "10.0.5.23", "3389/tcp", "FALSE", "low"),
+        ("4", "10.0.5.23", "", "FALSE", "low"),
+    ]
+    assert rows[0]["owner"] == "web-team@corp.example"
+    assert json.loads(out_json.read_text())["findings"][0]["host"] == "web01.corp.example"
+
+
+def test_assets_without_scanner_findings_explains_what_is_needed(tmp_path, fake_apis, sleeps):
+    from pathlib import Path
+
+    assets = Path(__file__).parent / "fixtures" / "assets.csv"
+    result = CliRunner().invoke(cli.main, ["-c", "CVE-2021-44228", "--assets", str(assets)],
+                                env={"XDG_CACHE_HOME": str(tmp_path / "cache")})
+
+    assert result.exit_code == 0
+    assert "--assets needs host-level findings" in result.output

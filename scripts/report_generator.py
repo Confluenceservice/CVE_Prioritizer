@@ -1,5 +1,7 @@
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
+
+from scripts.diff import CHANGE_TYPES
 from datetime import datetime
 import os
 
@@ -16,7 +18,10 @@ def generate_report(data, output_path="report.html", format="html"):
     # Render the HTML with provided data
     rendered_html = template.render(
         metadata=data.get("metadata", {}),
-        cves=data.get("cves", [])
+        cves=data.get("cves", []),
+        findings=data.get("findings", []),
+        changes=data.get("changes"),
+        change_labels=CHANGE_TYPES,
     )
 
     # Output as HTML

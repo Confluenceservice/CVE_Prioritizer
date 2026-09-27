@@ -11,6 +11,7 @@ import json
 import os
 import threading
 import time
+import xml.etree.ElementTree as ET
 from threading import Semaphore
 
 import click
@@ -18,9 +19,11 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone
 
 from scripts.constants import LOGO, SIMPLE_HEADER, VERBOSE_HEADER
-from scripts import cache
-from scripts.helpers import (is_valid_cve, nvd_cached, parse_report, prefetch_epss, update_env_file, worker,
-                             write_csv_header)
+from scripts import cache, policy
+from scripts.assets import (build_fix_order, load_assets, parse_csv_findings, parse_nessus_findings,
+                            parse_openvas_findings, print_fix_order, write_fix_order_csv)
+from scripts.diff import compare, load_baseline, print_changes
+from scripts.helpers import is_valid_cve, nvd_cached, prefetch_epss, update_env_file, worker, write_csv_header
 
 load_dotenv()
 Throttle_msg = ''
@@ -30,10 +33,10 @@ Throttle_msg = ''
 @click.command()
 @click.option('-a', '--api', type=str, help='Your API Key')
 @click.option('-c', '--cve', type=str, help='Unique CVE-ID')
-@click.option('-e', '--epss', type=float, default=0.2, help='EPSS threshold (Default 0.2)')
+@click.option('-e', '--epss', type=float, help='EPSS threshold (Default 0.2, or the policy file value)')
 @click.option('-f', '--file', type=click.File('r'), help='TXT file with CVEs (One per Line)')
 @click.option('-j', '--json_file', type=click.Path(), required=False, help='JSON output')
-@click.option('-n', '--cvss', type=float, default=6.0, help='CVSS threshold (Default 6.0)')
+@click.option('-n', '--cvss', type=float, help='CVSS threshold (Default 6.0, or the policy file value)')
 @click.option('-o', '--output', type=click.File('w'), help='Output filename')
 @click.option('-t', '--threads', type=int, default=100, help='Number of concurrent threads')
 @click.option('-v', '--verbose', is_flag=True, help='Verbose mode')
@@ -49,13 +52,22 @@ Throttle_msg = ''
               help="Add CISA's SSVC assessment from cvelistV5 (already included with --cvelistv5)")
 @click.option('--nessus', is_flag=True, help='Parse Nessus file')
 @click.option('--openvas', is_flag=True, help='Parse OpenVAS file')
+@click.option('--findings-csv', is_flag=True, help='Parse a CSV of findings with "host" and "cve" columns')
+@click.option('--assets', type=click.File('r'),
+              help='Asset CSV (host,criticality,internet_facing,owner) to order findings by exposure and criticality')
+@click.option('--hosts-output', type=click.File('w'), help='Write the per-host fix order to this CSV file')
+@click.option('--policy', 'policy_file', type=click.Path(exists=True, dir_okay=False),
+              help='YAML scoring policy: thresholds, exploitation rules, host escalation, SLAs (see policy.example.yaml)')
+@click.option('--baseline', type=click.Path(dir_okay=False),
+              help='Earlier JSON output (-j) to compare with; reports new KEV entries, EPSS spikes, fixed findings...')
 @click.option('--report', type=click.Choice(['html', 'pdf']), help='Generate a report in HTML or PDF format')
 @click.option('--cvss-version', type=int, default=3, help='Preferred CVSS version (3 or 4)')
 @click.option('--no-cache', is_flag=True, help='Always fetch fresh NIST NVD data (skip the local cache)')
 @click.option('--cache-ttl', type=click.FloatRange(min=0), default=cache.DEFAULT_TTL_HOURS, show_default=True,
               help='Hours a cached NIST NVD record stays fresh')
 def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, set_api, vulncheck, vulncheck_kev,
-         json_file, nessus, openvas, report, cvss_version, cvelistv5, cvelist_path, no_cache, cache_ttl, ssvc):
+         json_file, nessus, openvas, report, cvss_version, cvelistv5, cvelist_path, no_cache, cache_ttl, ssvc,
+         findings_csv, assets, hosts_output, baseline, policy_file):
 
     # Global Arguments
     color_enabled = not no_color
@@ -63,13 +75,24 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
 
     # standard args
     header = VERBOSE_HEADER if verbose else SIMPLE_HEADER
-    epss_threshold = epss
-    cvss_threshold = cvss
+    # Scoring policy: command-line thresholds win over the policy file, which wins over the defaults
+    try:
+        rules = policy.load(policy_file) if policy_file else policy.validate(None)
+    except (policy.PolicyError, OSError) as e:
+        click.echo(f"Error in policy file {policy_file}: {e}")
+        exit(1)
+    policy.configure(rules)
+    epss_threshold = epss if epss is not None else rules['thresholds']['epss']
+    cvss_threshold = cvss if cvss is not None else rules['thresholds']['cvss']
     sem = Semaphore(threads)
+    # Read the baseline before anything is written, so "-j last.json --baseline last.json" compares
+    # with the previous run and then replaces it
+    baseline_data = load_baseline(baseline) if baseline else None
     cache.configure(enabled=not no_cache, ttl_hours=cache_ttl)
 
     # Temporal lists
     cve_list = []
+    findings = []  # host-level findings from scanner reports
     threads = []
 
     if set_api:
@@ -92,10 +115,15 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
     elif list:
         cve_list = [c.strip() for c in list.split(',') if c.strip()]
     elif file:
-        if nessus:
-            cve_list = parse_report(file, 'nessus')
-        elif openvas:
-            cve_list = parse_report(file, 'openvas')
+        parser = (parse_nessus_findings if nessus else parse_openvas_findings if openvas
+                  else parse_csv_findings if findings_csv else None)
+        if parser:
+            try:
+                findings = parser(file)
+            except (ET.ParseError, ValueError) as e:
+                click.echo(f"Error reading {file.name}: {e}")
+                exit(1)
+            cve_list = sorted({finding['cve_id'] for finding in findings})
         else:
             cve_list = [line.strip() for line in file if line.strip()]
 
@@ -152,42 +180,54 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
     for t in threads:
         t.join()
 
+    # Asset context: order the scanner's host-level findings by priority, exposure and criticality
+    fix_order = []
+    if assets and not findings:
+        click.echo("\n--assets needs host-level findings: use -f with --nessus, --openvas or --findings-csv")
+    if findings:
+        try:
+            inventory = load_assets(assets) if assets else None
+        except ValueError as e:
+            click.echo(f"\nError reading {assets.name}: {e}")
+            inventory = None
+        fix_order = build_fix_order(findings, {r['cve_id']: r for r in results}, inventory)
+        print_fix_order(fix_order)
+        if hosts_output:
+            write_fix_order_csv(hosts_output, fix_order)
+
+    metadata = {
+        'generator': 'CVE Prioritizer',
+        'generation_date': datetime.now(timezone.utc).isoformat(),
+        'total_cves': len(cve_list),
+        'cvss_threshold': cvss_threshold,
+        'epss_threshold': epss_threshold,
+        'policy_file': policy_file or '',
+        'policy': rules,
+    }
+    output_data = {
+        'metadata': metadata,
+        'cves': results,
+    }
+    if findings:
+        output_data['findings'] = fix_order
+
+    if baseline_data is not None:
+        changes = compare(baseline_data, results, fix_order if findings else None)
+        print_changes(changes)
+        output_data['changes'] = changes
+
     if json_file:
-        metadata = {
-            'generator': 'CVE Prioritizer',
-            'generation_date': datetime.now(timezone.utc).isoformat(),
-            'total_cves': len(cve_list),
-            'cvss_threshold': cvss_threshold,
-            'epss_threshold': epss_threshold,
-        }
-        output_data = {
-            'metadata': metadata,
-            'cves': results,
-        }
-        with open(json_file, 'w') as json_file:
-            json.dump(output_data, json_file, indent=4)
+        with open(json_file, 'w') as json_output:
+            json.dump(output_data, json_output, indent=4)
 
     if report:
         from scripts.report_generator import generate_report
-
-        metadata = {
-            'generator': 'CVE Prioritizer',
-            'generation_date': datetime.now(timezone.utc).isoformat(),
-            'total_cves': len(cve_list),
-            'cvss_threshold': cvss_threshold,
-            'epss_threshold': epss_threshold,
-        }
-        output_data = {
-            'metadata': metadata,
-            'cves': results,
-        }
 
         generate_report(
             data=output_data,
             output_path=f"report.{report}",
             format=report
         )
-
 
 if __name__ == '__main__':
     main()

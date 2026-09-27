@@ -123,6 +123,75 @@
     </div>
 </div>
 
+{% if changes %}
+<div class="section">
+    <h2>Changes since {{ changes.baseline_date or 'baseline' }}</h2>
+    {% if changes.findings %}
+    <p>{{ changes.findings.new|length }} new host findings, {{ changes.findings.fixed|length }} host findings fixed</p>
+    {% endif %}
+    {% if changes.cves %}
+    <table>
+        <thead>
+            <tr>
+                <th>Change</th>
+                <th>CVE ID</th>
+                <th>Priority</th>
+                <th>Detail</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for change in changes.cves %}
+            <tr>
+                <td>{{ change_labels.get(change.change, change.change) }}</td>
+                <td>{{ change.cve_id }}</td>
+                <td>{{ change.priority }}</td>
+                <td>{{ change.detail }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No CVE changes.</p>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if findings %}
+<div class="section">
+    <h2>Fix Order by Host (top {{ [findings|length, 50]|min }} of {{ findings|length }} findings)</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Host</th>
+                <th>Port</th>
+                <th>CVE ID</th>
+                <th>Priority</th>
+                <th>Internet-facing</th>
+                <th>Criticality</th>
+                <th>Owner</th>
+                <th>Why</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for finding in findings[:50] %}
+            <tr>
+                <td>{{ finding.rank }}</td>
+                <td>{{ finding.host }}{% if finding.ip and finding.ip != finding.host %} ({{ finding.ip }}){% endif %}</td>
+                <td>{{ finding.port }}</td>
+                <td>{{ finding.cve_id }}</td>
+                <td>{{ finding.priority }}</td>
+                <td>{{ {'TRUE': 'Yes', 'FALSE': 'No'}.get(finding.internet_facing, 'Unknown') }}</td>
+                <td>{{ finding.criticality or 'Unknown' }}</td>
+                <td>{{ finding.owner }}</td>
+                <td>{{ finding.reason }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
 {% for level, group in cves|groupby("priority") %}
 <div class="section {{ level }}">
     <h2>Priority {{ level }} ({{ group|length }} CVEs)</h2>
