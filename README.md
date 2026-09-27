@@ -179,7 +179,16 @@ To use CVE_Prioritizer effectively, follow these steps:
      ```
      python3 cve_prioritizer.py -f scan.nessus --nessus --assets assets.csv --hosts-output fix_order.csv
      ```
-6. Speed up repeat scans with the local cache:
+6. Track what changed since your last run with `--baseline <earlier -j output>`:
+   - Reports CVEs **added to CISA KEV**, **priority raised or lowered**, **new public exploits**, **EPSS spikes**
+   (+0.1 or more), CVEs **newly scored**, **new** CVEs, and CVEs **no longer present**.
+   - With scanner input on both runs it also lists **new host findings** and **findings fixed** since last time.
+   - Use the same file for both to keep a rolling baseline; it is read before the new results are written:
+     ```
+     python3 cve_prioritizer.py -f scan.nessus --nessus --assets assets.csv -j last.json --baseline last.json
+     ```
+   - The changes appear in the terminal, under `changes` in the JSON output, and at the top of the HTML report.
+7. Speed up repeat scans with the local cache:
    - NIST NVD records are cached in `~/.cache/cve_prioritizer/nvd.sqlite` (or `$XDG_CACHE_HOME/cve_prioritizer/`),
    so re-running a scan skips the NVD requests and their rate-limit delay. Only scored records are cached.
    - Cached records expire after 24 hours by default; change this with `--cache-ttl <hours>`.

@@ -22,6 +22,7 @@ from scripts.constants import LOGO, SIMPLE_HEADER, VERBOSE_HEADER
 from scripts import cache
 from scripts.assets import (build_fix_order, load_assets, parse_csv_findings, parse_nessus_findings,
                             parse_openvas_findings, print_fix_order, write_fix_order_csv)
+from scripts.diff import compare, load_baseline, print_changes
 from scripts.helpers import is_valid_cve, nvd_cached, prefetch_epss, update_env_file, worker, write_csv_header
 
 load_dotenv()
@@ -55,6 +56,8 @@ Throttle_msg = ''
 @click.option('--assets', type=click.File('r'),
               help='Asset CSV (host,criticality,internet_facing,owner) to order findings by exposure and criticality')
 @click.option('--hosts-output', type=click.File('w'), help='Write the per-host fix order to this CSV file')
+@click.option('--baseline', type=click.Path(dir_okay=False),
+              help='Earlier JSON output (-j) to compare with; reports new KEV entries, EPSS spikes, fixed findings...')
 @click.option('--report', type=click.Choice(['html', 'pdf']), help='Generate a report in HTML or PDF format')
 @click.option('--cvss-version', type=int, default=3, help='Preferred CVSS version (3 or 4)')
 @click.option('--no-cache', is_flag=True, help='Always fetch fresh NIST NVD data (skip the local cache)')
@@ -62,7 +65,7 @@ Throttle_msg = ''
               help='Hours a cached NIST NVD record stays fresh')
 def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, set_api, vulncheck, vulncheck_kev,
          json_file, nessus, openvas, report, cvss_version, cvelistv5, cvelist_path, no_cache, cache_ttl, ssvc,
-         findings_csv, assets, hosts_output):
+         findings_csv, assets, hosts_output, baseline):
 
     # Global Arguments
     color_enabled = not no_color
@@ -73,6 +76,9 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
     epss_threshold = epss
     cvss_threshold = cvss
     sem = Semaphore(threads)
+    # Read the baseline before anything is written, so "-j last.json --baseline last.json" compares
+    # with the previous run and then replaces it
+    baseline_data = load_baseline(baseline) if baseline else None
     cache.configure(enabled=not no_cache, ttl_hours=cache_ttl)
 
     # Temporal lists
@@ -193,6 +199,11 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
     }
     if findings:
         output_data['findings'] = fix_order
+
+    if baseline_data is not None:
+        changes = compare(baseline_data, results, fix_order if findings else None)
+        print_changes(changes)
+        output_data['changes'] = changes
 
     if json_file:
         with open(json_file, 'w') as json_output:
