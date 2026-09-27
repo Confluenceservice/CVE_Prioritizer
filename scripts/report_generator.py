@@ -1,4 +1,4 @@
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
 from datetime import datetime
 import os
@@ -7,7 +7,8 @@ import os
 def generate_report(data, output_path="report.html", format="html"):
     # Set the path to the templates folder
     template_dir = Path(__file__).resolve().parent.parent / "docs" / "templates"
-    env = Environment(loader=FileSystemLoader(str(template_dir)))
+    # Escape HTML: CVE data (vendor/product names, reasons with "<") comes from third-party sources
+    env = Environment(loader=FileSystemLoader(str(template_dir)), autoescape=select_autoescape(['html']))
 
     # Load the dashboard-style template
     template = env.get_template("report_template.html")

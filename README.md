@@ -90,11 +90,31 @@ This approach categorizes vulnerabilities into five priority levels, allowing yo
 
 | **Priority** | **Description**                  |
 |--------------|----------------------------------|
-| Priority 1+  | CVEs found in CISA's KEV         |
+| Priority 1+  | CVEs with evidence of exploitation: in CISA's KEV, CVSS v4 exploit maturity "Attacked", or CISA SSVC "active" exploitation |
 | Priority 1   | CVEs in the Upper Right Quadrant |
 | Priority 2   | CVEs in the Lower Right Quadrant |
 | Priority 3   | CVEs in the Upper Left Quadrant  |
 | Priority 4   | CVEs in the Lower Left Quadrant  |
+| Unscored     | No CVSS or EPSS score yet (e.g. NVD "Awaiting Analysis"), review manually |
+
+Every result includes a **reason** explaining its priority, for example:
+
+```
+CVSS 9.8 >= 6 but EPSS 0.01 < 0.2; public exploit template (Nuclei); EPSS up +0.35 in 7 days
+```
+
+### Extra signals
+
+These are reported alongside the priority and in the reason. Only CISA SSVC "active" exploitation changes the priority.
+
+- **Public exploit (`public_exploit`):** `TRUE` when [ProjectDiscovery Nuclei](https://github.com/projectdiscovery/nuclei-templates)
+  has a ready-made template for the CVE, i.e. a public, weaponised check exists. Empty when the index couldn't be loaded.
+- **EPSS 7-day change (`epss_change_7d`):** how much the EPSS score moved in the last week. Rises of 0.1 or more are
+  called out in the reason.
+- **CISA SSVC (`ssvc_*`):** CISA's [Vulnrichment](https://github.com/cisagov/vulnrichment) assessment: exploitation
+  (none / poc / active), automatable (yes / no) and technical impact (partial / total). Included with `--cvelistv5`;
+  add `--ssvc` to fetch it for the NVD and VulnCheck sources (one extra lookup per CVE, or none with `--cvelist-path`).
+  When the vendor didn't publish a CVSS score, `--cvelistv5` uses the score CISA adds.
 
 
 Below is a modified version of FIRST's recommendation after applying our own approach.
@@ -212,6 +232,9 @@ python3 cve_prioritizer.py -f cve_list.txt -o ~/Desktop/prioritized.csv
 ![output_file.png](https://raw.githubusercontent.com/TURROKS/CVE_Prioritizer/main/misc/output_file.png)
 
 This outputs the verbose results independently of the terminal output that you use.
+
+New columns are added at the end of the CSV (`epss_change_7d`, `public_exploit`, `ssvc_exploitation`,
+`ssvc_automatable`, `ssvc_technical_impact`, `reason`), so existing columns keep their positions.
 
 #### Contributing
 

@@ -52,42 +52,72 @@ def _connect():
     # writers itself and timeout waits for a lock instead of failing.
     conn = sqlite3.connect(path, timeout=30)
     conn.execute('CREATE TABLE IF NOT EXISTS nvd (cve_id TEXT PRIMARY KEY, fetched_at REAL, data TEXT)')
+    # Whole datasets that are expensive to download, e.g. the Nuclei template index
+    conn.execute('CREATE TABLE IF NOT EXISTS blobs (name TEXT PRIMARY KEY, fetched_at REAL, data TEXT)')
     return conn
 
 
-def get(cve_id):
-    """
-    Returns the cached NVD record for cve_id, or None if missing, expired or caching is disabled.
-    """
+# Table and key-column names are fixed here, never taken from input
+_TABLES = {'nvd': 'cve_id', 'blobs': 'name'}
+
+
+def _read(table, key):
     if not _config['enabled']:
         return None
+    column = _TABLES[table]
     try:
         conn = _connect()
         try:
-            row = conn.execute('SELECT fetched_at, data FROM nvd WHERE cve_id = ?', (cve_id,)).fetchone()
+            row = conn.execute(f'SELECT fetched_at, data FROM {table} WHERE {column} = ?', (key,)).fetchone()
         finally:
             conn.close()
     except (sqlite3.Error, OSError) as err:
-        logger.warning(f"{cve_id} - NVD cache read failed: {err}")
+        logger.warning(f"{key} - cache read failed: {err}")
         return None
     if row is None or time.time() - row[0] > _config['ttl_seconds']:
         return None
     return json.loads(row[1])
 
 
-def put(cve_id, record):
-    """
-    Stores an NVD record. Cache failures are logged and never stop a scan.
-    """
+def _write(table, key, value):
     if not _config['enabled']:
         return
+    column = _TABLES[table]
     try:
         conn = _connect()
         try:
             with conn:
-                conn.execute('INSERT OR REPLACE INTO nvd (cve_id, fetched_at, data) VALUES (?, ?, ?)',
-                             (cve_id, time.time(), json.dumps(record)))
+                conn.execute(f'INSERT OR REPLACE INTO {table} ({column}, fetched_at, data) VALUES (?, ?, ?)',
+                             (key, time.time(), json.dumps(value)))
         finally:
             conn.close()
     except (sqlite3.Error, OSError) as err:
-        logger.warning(f"{cve_id} - NVD cache write failed: {err}")
+        logger.warning(f"{key} - cache write failed: {err}")
+
+
+def get(cve_id):
+    """
+    Returns the cached NVD record for cve_id, or None if missing, expired or caching is disabled.
+    """
+    return _read('nvd', cve_id)
+
+
+def put(cve_id, record):
+    """
+    Stores an NVD record. Cache failures are logged and never stop a scan.
+    """
+    _write('nvd', cve_id, record)
+
+
+def get_blob(name):
+    """
+    Returns a cached dataset by name, or None if missing, expired or caching is disabled.
+    """
+    return _read('blobs', name)
+
+
+def put_blob(name, value):
+    """
+    Stores a JSON-serialisable dataset by name.
+    """
+    _write('blobs', name, value)
