@@ -18,7 +18,8 @@ from dotenv import load_dotenv
 from datetime import datetime, timezone
 
 from scripts.constants import LOGO, SIMPLE_HEADER, VERBOSE_HEADER
-from scripts.helpers import is_valid_cve, parse_report, update_env_file, worker
+from scripts import cache
+from scripts.helpers import is_valid_cve, nvd_cached, parse_report, prefetch_epss, update_env_file, worker
 
 load_dotenv()
 Throttle_msg = ''
@@ -47,8 +48,11 @@ Throttle_msg = ''
 @click.option('--openvas', is_flag=True, help='Parse OpenVAS file')
 @click.option('--report', type=click.Choice(['html', 'pdf']), help='Generate a report in HTML or PDF format')
 @click.option('--cvss-version', type=int, default=3, help='Preferred CVSS version (3 or 4)')
+@click.option('--no-cache', is_flag=True, help='Always fetch fresh NIST NVD data (skip the local cache)')
+@click.option('--cache-ttl', type=click.FloatRange(min=0), default=cache.DEFAULT_TTL_HOURS, show_default=True,
+              help='Hours a cached NIST NVD record stays fresh')
 def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, set_api, vulncheck, vulncheck_kev,
-         json_file, nessus, openvas, report, cvss_version, cvelistv5, cvelist_path):
+         json_file, nessus, openvas, report, cvss_version, cvelistv5, cvelist_path, no_cache, cache_ttl):
 
     # Global Arguments
     color_enabled = not no_color
@@ -59,6 +63,7 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
     epss_threshold = epss
     cvss_threshold = cvss
     sem = Semaphore(threads)
+    cache.configure(enabled=not no_cache, ttl_hours=cache_ttl)
 
     # Temporal lists
     cve_list = []
@@ -110,6 +115,13 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
         output.write("cve_id,priority,epss,epss_percentile,cvss,cvss_version,cvss_severity,kev,ransomware,exploited,kev_source,cpe,vendor,"
                      "product,vector" + "\n")
 
+    # Normalise once so the EPSS prefetch and the workers see the same IDs
+    cve_list = [c.strip().upper() for c in cve_list]
+    uses_nvd = not (vulncheck or vulncheck_kev or cvelistv5)
+
+    # One EPSS request per 100 CVEs instead of one per CVE
+    prefetch_epss([c for c in cve_list if is_valid_cve(c)])
+
     results = []
     for cve in cve_list:
         throttle = 1
@@ -122,7 +134,8 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
             exit()
         elif cvelistv5:
             throttle = 0.1
-        cve = cve.strip().upper()
+        if uses_nvd and nvd_cached(cve):
+            throttle = 0  # served from the local cache, no NVD request to pace
         if not is_valid_cve(cve):
             click.echo(f'{cve} Error: CVEs should be provided in the standard format CVE-0000-0000*')
         else:
