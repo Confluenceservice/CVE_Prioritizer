@@ -161,7 +161,25 @@ To use CVE_Prioritizer effectively, follow these steps:
    - Define custom thresholds with `--cvss` and/or `--epss` to align the results with your organization's
    risk appetite.
    - Define the number of concurrent threads with `-t` or `--threads` (default: 100).
-5. Speed up repeat scans with the local cache:
+5. Add asset context to see **what to fix first, and where**:
+   - Scanner reports (`--nessus`, `--openvas`) keep the host each CVE was found on. Exports from other scanners
+   work too: save them as a CSV with `host` and `cve` columns (optional `ip`, `port`) and use `--findings-csv`.
+   - `--assets assets.csv` describes your hosts. `host` can be a hostname, FQDN, IP address or CIDR range:
+     ```
+     host,criticality,internet_facing,owner
+     web01,critical,yes,web-team@corp.example
+     vpn.corp.example,high,yes,netops@corp.example
+     10.0.5.0/24,low,no,it-lab
+     ```
+   - Findings are put in **fix order**: CVE priority first, then internet-facing before internal hosts, then
+   criticality (critical > high > medium > low). Hosts missing from the asset file sort between internet-facing and
+   internal. The CVE priority itself doesn't change: it describes the vulnerability, not the host.
+   - The top 20 are shown in the terminal; `--hosts-output fix_order.csv` saves them all, and the JSON output and
+   HTML report include them under `findings`.
+     ```
+     python3 cve_prioritizer.py -f scan.nessus --nessus --assets assets.csv --hosts-output fix_order.csv
+     ```
+6. Speed up repeat scans with the local cache:
    - NIST NVD records are cached in `~/.cache/cve_prioritizer/nvd.sqlite` (or `$XDG_CACHE_HOME/cve_prioritizer/`),
    so re-running a scan skips the NVD requests and their rate-limit delay. Only scored records are cached.
    - Cached records expire after 24 hours by default; change this with `--cache-ttl <hours>`.

@@ -980,39 +980,16 @@ def is_valid_cve(cve_id):
 
 
 def parse_report(file, report_type):
-    cve_ids = set()
-    if report_type == 'nessus':
-        try:
-            tree = ET.parse(file)
-            root = tree.getroot()
-            cve_ids.update(
-                cve.text.strip().upper()
-                for report_item in root.findall(".//ReportItem")
-                for cve in report_item.findall("cve")
-                if is_valid_cve(cve.text.strip().upper())
-            )
-            return cve_ids
-        except ET.ParseError as e:
-            click.echo(f"Error parsing XML file: {e}")
-            return []
-        except Exception as e:
-            click.echo(f"An error occurred: {e}")
-            return []
-    elif report_type == 'openvas':
-        try:
-            tree = ET.parse(file)
-            root = tree.getroot()
-            for nvt in root.findall(".//nvt"):
-                # Look for ref elements that have type="cve"
-                for ref in nvt.findall(".//ref[@type='cve']"):
-                    cve = ref.get("id")
-                    if cve:
-                        cve_ids.add(cve.strip())
-            return list(cve_ids)
-        except ET.ParseError as e:
-            print(f"Error parsing XML file: {e}")
-            return []
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            return []
-    return list(cve_ids)
+    """
+    CVE IDs from a Nessus or OpenVAS report. Use scripts.assets for host-level findings.
+    """
+    from scripts.assets import parse_nessus_findings, parse_openvas_findings
+    parsers = {'nessus': parse_nessus_findings, 'openvas': parse_openvas_findings}
+    if report_type not in parsers:
+        return []
+    try:
+        findings = parsers[report_type](file)
+    except ET.ParseError as e:
+        click.echo(f"Error parsing XML file: {e}")
+        return []
+    return sorted({finding['cve_id'] for finding in findings if is_valid_cve(finding['cve_id'])})

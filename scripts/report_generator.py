@@ -16,7 +16,8 @@ def generate_report(data, output_path="report.html", format="html"):
     # Render the HTML with provided data
     rendered_html = template.render(
         metadata=data.get("metadata", {}),
-        cves=data.get("cves", [])
+        cves=data.get("cves", []),
+        findings=data.get("findings", [])
     )
 
     # Output as HTML

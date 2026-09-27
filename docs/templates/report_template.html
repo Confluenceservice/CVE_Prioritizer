@@ -123,6 +123,42 @@
     </div>
 </div>
 
+{% if findings %}
+<div class="section">
+    <h2>Fix Order by Host (top {{ [findings|length, 50]|min }} of {{ findings|length }} findings)</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Host</th>
+                <th>Port</th>
+                <th>CVE ID</th>
+                <th>Priority</th>
+                <th>Internet-facing</th>
+                <th>Criticality</th>
+                <th>Owner</th>
+                <th>Why</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for finding in findings[:50] %}
+            <tr>
+                <td>{{ finding.rank }}</td>
+                <td>{{ finding.host }}{% if finding.ip and finding.ip != finding.host %} ({{ finding.ip }}){% endif %}</td>
+                <td>{{ finding.port }}</td>
+                <td>{{ finding.cve_id }}</td>
+                <td>{{ finding.priority }}</td>
+                <td>{{ {'TRUE': 'Yes', 'FALSE': 'No'}.get(finding.internet_facing, 'Unknown') }}</td>
+                <td>{{ finding.criticality or 'Unknown' }}</td>
+                <td>{{ finding.owner }}</td>
+                <td>{{ finding.reason }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
 {% for level, group in cves|groupby("priority") %}
 <div class="section {{ level }}">
     <h2>Priority {{ level }} ({{ group|length }} CVEs)</h2>
