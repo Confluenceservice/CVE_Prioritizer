@@ -48,8 +48,11 @@ Throttle_msg = ''
 @click.option('--openvas', is_flag=True, help='Parse OpenVAS file')
 @click.option('--report', type=click.Choice(['html', 'pdf']), help='Generate a report in HTML or PDF format')
 @click.option('--cvss-version', type=int, default=3, help='Preferred CVSS version (3 or 4)')
+@click.option('--unscored-file', type=click.Path(dir_okay=False, writable=True), required=False,
+              help='CSV of CVEs that could not be scored, with the reason (not_found, awaiting_analysis, '
+                   'no_metrics, lookup_error, epss_unavailable)')
 def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, set_api, vulncheck, vulncheck_kev,
-         json_file, nessus, openvas, report, cvss_version, cvelistv5, cvelist_path):
+         json_file, nessus, openvas, report, cvss_version, cvelistv5, cvelist_path, unscored_file):
 
     # Global Arguments
     color_enabled = not no_color
@@ -112,6 +115,10 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
                      "product,vector" + "\n")
 
     results = []
+    # CVEs the workers could not score. They get no row in --output, as before;
+    # this list says which ones and why, so a caller can tell "not scored yet"
+    # from "the lookup failed".
+    unscored = []
 
     # One batched EPSS lookup per 100 CVEs, instead of one request per worker thread
     epss_batch_prefetch(cve_list)
@@ -133,13 +140,25 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
             sem.acquire()
             t = threading.Thread(target=worker, args=(cve.upper().strip(), cvss_threshold, epss_threshold, verbose,
                                                       sem, color_enabled, cvss_version, output, api, vulncheck,
-                                                      vulncheck_kev, results, cvelistv5, cvelist_path))
+                                                      vulncheck_kev, results, cvelistv5, cvelist_path, unscored))
             threads.append(t)
             t.start()
             time.sleep(throttle)
 
     for t in threads:
         t.join()
+
+    unscored.sort(key=lambda u: u['cve_id'])
+    if unscored:
+        click.echo(f"\n{len(unscored)} CVE(s) could not be scored:")
+        for u in unscored:
+            click.echo(f"{u['cve_id']:<18}{u['reason']}")
+
+    if unscored_file:
+        with open(unscored_file, 'w') as uf:
+            uf.write("cve_id,reason,source\n")
+            for u in unscored:
+                uf.write(f"{u['cve_id']},{u['reason']},{u['source']}\n")
 
     if json_file:
         metadata = {
@@ -152,6 +171,7 @@ def main(api, cve, epss, file, cvss, output, threads, verbose, list, no_color, s
         output_data = {
             'metadata': metadata,
             'cves': results,
+            'unscored': unscored,
         }
         with open(json_file, 'w') as json_file:
             json.dump(output_data, json_file, indent=4)

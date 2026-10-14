@@ -33,6 +33,31 @@ logger = logging.getLogger(__name__)
 _kev_catalog = None
 _kev_catalog_lock = threading.Lock()
 
+# Why a fetcher came back without a CVSS score. The worker used to drop such a
+# CVE silently (no CSV row, exit 0), which made "not scored yet" look exactly
+# like "the request failed". Each empty result now carries one of these, and
+# the worker reports it through the `unscored` list (see --unscored-file).
+UNSCORED_NOT_FOUND = "not_found"                  # the source has no record of the CVE (yet)
+UNSCORED_AWAITING_ANALYSIS = "awaiting_analysis"  # record exists, NVD has not scored it
+UNSCORED_NO_METRICS = "no_metrics"                # record exists, none of the requested CVSS versions
+UNSCORED_LOOKUP_ERROR = "lookup_error"            # HTTP error, network, timeout or unreadable response
+UNSCORED_EPSS_UNAVAILABLE = "epss_unavailable"    # CVSS found, but the EPSS lookup failed
+
+
+def _empty_result(reason):
+    """The empty-field result every fetcher returns when it has no score, tagged with why."""
+    return {
+        "cvss_version": "",
+        "cvss_baseScore": "",
+        "cvss_severity": "",
+        "cisa_kev": "",
+        "exploit_maturity_attacked": "",
+        "ransomware": "",
+        "cpe": "",
+        "vector": "",
+        "unscored_reason": reason,
+    }
+
 
 def _get_kev_catalog():
     """
@@ -188,29 +213,15 @@ def nist_check(cve_id, api_key, cvss_version):
                 if unique_cve.get("cve").get("vulnStatus") == "Awaiting Analysis":
                     click.echo(f"{cve_id:<18}Awaiting NVD Analysis")
                     logger.info(f"{cve_id} - Awaiting NVD Analysis")
-                    return {
-                        "cvss_version": "",
-                        "cvss_baseScore": "",
-                        "cvss_severity": "",
-                        "cisa_kev": "",
-                        "exploit_maturity_attacked": "",
-                        "ransomware": "",
-                        "cpe": "",
-                        "vector": ""
-                    }
+                    return _empty_result(UNSCORED_AWAITING_ANALYSIS)
+            # A record with none of the requested CVSS versions, e.g. a v4-only
+            # CVE in "Received" status when --cvss-version is 3.
+            logger.warning(f"{cve_id} - No CVSS metrics for the requested version in NIST NVD.")
+            return _empty_result(UNSCORED_NO_METRICS)
         else:
             click.echo(f"{cve_id:<18}Not Found in NIST NVD.")
             logger.warning(f"{cve_id} - Not Found in NIST NVD.")
-            return {
-                "cvss_version": "",
-                "cvss_baseScore": "",
-                "cvss_severity": "",
-                "cisa_kev": "",
-                "exploit_maturity_attacked": "",
-                "ransomware": "",
-                "cpe": "",
-                "vector": ""
-            }
+            return _empty_result(UNSCORED_NOT_FOUND)
     except requests.exceptions.HTTPError:
         click.echo(f"{cve_id:<18}HTTP error occurred, check CVE ID or API Key")
         logger.error(f"{cve_id} - HTTP error occurred, check CVE ID or API Key")
@@ -227,16 +238,7 @@ def nist_check(cve_id, api_key, cvss_version):
         click.echo(f"Error processing the response: {val_err}")
         logger.error(f"{cve_id} - Error processing the response: {val_err}")
 
-    return {
-        "cvss_version": "",
-        "cvss_baseScore": "",
-        "cvss_severity": "",
-        "cisa_kev": "",
-        "exploit_maturity_attacked": "",
-        "ransomware": "",
-        "cpe": "",
-        "vector": ""
-    }
+    return _empty_result(UNSCORED_LOOKUP_ERROR)
 
 
 # Check Vulncheck NVD++
@@ -249,16 +251,7 @@ def vulncheck_check(cve_id, api_key, kev_check, cvss_version):
         if not vulncheck_key:
             click.echo("VulnCheck requires an API key")
             logger.error("VulnCheck requires an API key")
-            return {
-                "cvss_version": "",
-                "cvss_baseScore": "",
-                "cvss_severity": "",
-                "cisa_kev": "",
-                "exploit_maturity_attacked": "",
-                "ransomware": "",
-                "cpe": "",
-                "vector": ""
-            }
+            return _empty_result(UNSCORED_LOOKUP_ERROR)
 
         vulncheck_url = VULNCHECK_BASE_URL + f"?cve={cve_id}"
         header = {"accept": "application/json"}
@@ -312,29 +305,13 @@ def vulncheck_check(cve_id, api_key, kev_check, cvss_version):
                 if unique_cve.get("vulnStatus") == "Awaiting Analysis":
                     click.echo(f"{cve_id:<18}NIST Status: {unique_cve.get('vulnStatus')}")
                     logger.info(f"{cve_id} - NIST Status: {unique_cve.get('vulnStatus')}")
-                    return {
-                        "cvss_version": "",
-                        "cvss_baseScore": "",
-                        "cvss_severity": "",
-                        "cisa_kev": "",
-                        "exploit_maturity_attacked": "",
-                        "ransomware": "",
-                        "cpe": "",
-                        "vector": ""
-                    }
+                    return _empty_result(UNSCORED_AWAITING_ANALYSIS)
+            logger.warning(f"{cve_id} - No CVSS metrics for the requested version in VulnCheck.")
+            return _empty_result(UNSCORED_NO_METRICS)
         else:
             click.echo(f"{cve_id:<18}Not Found in VulnCheck.")
             logger.warning(f"{cve_id} - Not Found in VulnCheck.")
-            return {
-                "cvss_version": "",
-                "cvss_baseScore": "",
-                "cvss_severity": "",
-                "cisa_kev": "",
-                "exploit_maturity_attacked": "",
-                "ransomware": "",
-                "cpe": "",
-                "vector": ""
-            }
+            return _empty_result(UNSCORED_NOT_FOUND)
     except requests.exceptions.HTTPError:
         click.echo(f"{cve_id:<18}HTTP error occurred, check CVE ID or API Key")
         logger.error(f"{cve_id} - HTTP error occurred, check CVE ID or API Key")
@@ -351,16 +328,7 @@ def vulncheck_check(cve_id, api_key, kev_check, cvss_version):
         click.echo(f"Error processing the response: {val_err}")
         logger.error(f"{cve_id} - Error processing the response: {val_err}")
 
-    return {
-        "cvss_version": "",
-        "cvss_baseScore": "",
-        "cvss_severity": "",
-        "cisa_kev": "",
-        "exploit_maturity_attacked": "",
-        "ransomware": "",
-        "cpe": "",
-        "vector": ""
-    }
+    return _empty_result(UNSCORED_LOOKUP_ERROR)
 
 
 def vulncheck_kev(cve_id, api_key):
@@ -426,30 +394,12 @@ def cvelist_check(cve_id, local_base_path=None):
     try:
         year, block = _cvelist_path_for_cve(cve_id)
         if not year:
-            return {
-                "cvss_version": "",
-                "cvss_baseScore": "",
-                "cvss_severity": "",
-                "cisa_kev": "",
-                "exploit_maturity_attacked": "",
-                "ransomware": "",
-                "cpe": "",
-                "vector": ""
-            }
+            return _empty_result(UNSCORED_NOT_FOUND)
 
         if local_base_path:
             file_path = os.path.join(local_base_path, 'cves', year, f"{block}", f"CVE-{year}-{cve_id.split('-')[2]}.json")
             if not os.path.exists(file_path):
-                return {
-                    "cvss_version": "",
-                    "cvss_baseScore": "",
-                    "cvss_severity": "",
-                    "cisa_kev": "",
-                    "exploit_maturity_attacked": "",
-                    "ransomware": "",
-                    "cpe": "",
-                    "vector": ""
-                }
+                return _empty_result(UNSCORED_NOT_FOUND)
             with open(file_path, 'r') as f:
                 data = json.load(f)
         else:
@@ -458,16 +408,7 @@ def cvelist_check(cve_id, local_base_path=None):
             if resp.status_code != 200:
                 click.echo(f"{cve_id:<18}Not Found in CVE List V5.")
                 logger.warning(f"{cve_id} - Not Found in CVE List V5.")
-                return {
-                    "cvss_version": "",
-                    "cvss_baseScore": "",
-                    "cvss_severity": "",
-                    "cisa_kev": "",
-                    "exploit_maturity_attacked": "",
-                    "ransomware": "",
-                    "cpe": "",
-                    "vector": ""
-                }
+                return _empty_result(UNSCORED_NOT_FOUND)
             data = resp.json()
 
         # Extract minimal fields from JSON 5.x containers
@@ -525,16 +466,7 @@ def cvelist_check(cve_id, local_base_path=None):
         }
     except Exception as e:
         logger.error(f"{cve_id} - Error processing cvelistV5: {e}")
-        return {
-            "cvss_version": "",
-            "cvss_baseScore": "",
-            "cvss_severity": "",
-            "cisa_kev": "",
-            "exploit_maturity_attacked": "",
-            "ransomware": "",
-            "cpe": "",
-            "vector": ""
-        }
+        return _empty_result(UNSCORED_LOOKUP_ERROR)
 
 
 def colored_print(priority):
@@ -615,9 +547,13 @@ def print_and_write(working_file, cve_id, priority, epss, epss_percentile, cvss_
 
 # Main function
 def worker(cve_id, cvss_score, epss_score, verbose_print, sem, colored_output, cvss_v, save_output=None, api=None,
-           nvd_plus=None, vc_kev=None, results=None, use_cvelist=False, cvelist_path=None):
+           nvd_plus=None, vc_kev=None, results=None, use_cvelist=False, cvelist_path=None, unscored=None):
     """
     Main Function
+
+    A CVE that cannot be scored still gets no CSV row, as before. When
+    `unscored` is a list, the worker appends {'cve_id', 'reason', 'source'} to
+    it instead of dropping the CVE without a trace.
     """
     try:
         kev_source = 'CISA'
@@ -709,9 +645,15 @@ def worker(cve_id, cvss_score, epss_score, verbose_print, sem, colored_output, c
                     'vector': cve_result.get('vector')
                 })
         except (TypeError, AttributeError):
-            pass
+            # The score comparisons above hit an empty field: no CVSS score
+            # (the fetcher says why) or no EPSS score.
+            if unscored is not None:
+                reason = cve_result.get("unscored_reason") or UNSCORED_EPSS_UNAVAILABLE
+                unscored.append({'cve_id': cve_id, 'reason': reason, 'source': kev_source})
     except Exception as e:
         logger.error(f"Error in worker thread for CVE {cve_id}: {e}")
+        if unscored is not None:
+            unscored.append({'cve_id': cve_id, 'reason': UNSCORED_LOOKUP_ERROR, 'source': ''})
     finally:
         sem.release()
 

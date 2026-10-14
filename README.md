@@ -206,6 +206,26 @@ python3 cve_prioritizer.py -f cve_list.txt -o ~/Desktop/prioritized.csv
 
 This outputs the verbose results independently of the terminal output that you use.
 
+**CVEs that could not be scored**
+
+A CVE without a CVSS or EPSS score gets no row in the CSV. The run ends by listing those CVEs and the reason,
+and `--unscored-file` saves the same list as a CSV (`cve_id,reason,source`):
+
+```
+python3 cve_prioritizer.py -f cve_list.txt -o prioritized.csv --unscored-file unscored.csv
+```
+
+| Reason | Meaning |
+|---|---|
+| `not_found` | The source has no record of the CVE, often because it is too new to be published |
+| `awaiting_analysis` | NVD has the record but has not scored it yet |
+| `no_metrics` | The record has no score for the requested CVSS version (try `--cvss-version 4`) |
+| `lookup_error` | The request failed: HTTP error, rate limit, network or an unreadable response. Rerun these |
+| `epss_unavailable` | CVSS was found but the EPSS lookup failed |
+
+The first three usually resolve themselves as NVD catches up. `lookup_error` means the result is incomplete.
+With `-j`, the JSON output carries the same list under `unscored`.
+
 #### Contributing
 
 Please refer to [CONTRIBUTING.md](https://raw.githubusercontent.com/TURROKS/CVE_Prioritizer/main/docs/CONTRIBUTING.md) for guidelines
