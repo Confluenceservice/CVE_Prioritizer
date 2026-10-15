@@ -1,0 +1,5 @@
+host,criticality,internet_facing,owner
+web01,critical,yes,web-team@corp.example
+vpn.corp.example,high,yes,netops@corp.example
+10.0.5.0/24,low,no,it-lab
+10.0.9.4,medium,sometimes,desktop-team

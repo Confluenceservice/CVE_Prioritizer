@@ -1,6 +1,6 @@
 import pytest
 
-from scripts import cache, helpers
+from scripts import cache, helpers, policy
 
 
 @pytest.fixture(autouse=True)
@@ -14,6 +14,7 @@ def isolate(monkeypatch, tmp_path):
     helpers._nuclei_ids = None
     helpers._nuclei_loaded = False
     cache.configure(enabled=True, ttl_hours=24, path=str(tmp_path / "nvd.sqlite"))
+    policy.configure(None)  # default scoring policy
 
     def no_network(url, **kwargs):
         raise AssertionError(f"Unexpected network call in test: {url}")
@@ -24,3 +25,4 @@ def isolate(monkeypatch, tmp_path):
     helpers._epss_cache.clear()
     helpers._nuclei_ids = None
     helpers._nuclei_loaded = False
+    policy.configure(None)

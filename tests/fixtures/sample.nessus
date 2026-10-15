@@ -1,0 +1,29 @@
+<?xml version="1.0" ?>
+<NessusClientData_v2>
+<Report name="Weekly scan" xmlns:cm="http://www.nessus.org/cm">
+<ReportHost name="203.0.113.10">
+<HostProperties>
+<tag name="host-ip">203.0.113.10</tag>
+<tag name="host-fqdn">web01.corp.example</tag>
+<tag name="hostname">web01</tag>
+</HostProperties>
+<ReportItem port="443" svc_name="www" protocol="tcp" severity="4" pluginID="156032" pluginName="Apache Log4Shell RCE">
+<cve>CVE-2021-44228</cve>
+<cve>CVE-2021-45046</cve>
+</ReportItem>
+<ReportItem port="0" svc_name="general" protocol="tcp" severity="0" pluginID="19506" pluginName="Nessus Scan Information">
+</ReportItem>
+</ReportHost>
+<ReportHost name="10.0.5.23">
+<HostProperties>
+<tag name="host-ip">10.0.5.23</tag>
+</HostProperties>
+<ReportItem port="3389" svc_name="msrdp" protocol="tcp" severity="4" pluginID="125313" pluginName="BlueKeep">
+<cve>CVE-2019-0708</cve>
+</ReportItem>
+<ReportItem port="0" svc_name="general" protocol="tcp" severity="3" pluginID="99999" pluginName="Windows patch">
+<cve>cve-2019-0708</cve>
+</ReportItem>
+</ReportHost>
+</Report>
+</NessusClientData_v2>

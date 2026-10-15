@@ -16,7 +16,7 @@ import requests
 import click
 from dotenv import load_dotenv
 from termcolor import colored
-from scripts import cache
+from scripts import cache, policy
 from scripts.constants import (EPSS_URL, NIST_BASE_URL, NUCLEI_BASE_URL, VULNCHECK_BASE_URL, VULNCHECK_KEV_BASE_URL,
                                CISA_KEV_URL, CVELIST_RAW_BASE)
 from scripts.net import http_get
@@ -815,7 +815,7 @@ def _display(value):
 CSV_FIELDS = ['cve_id', 'priority', 'epss', 'epss_percentile', 'cvss', 'cvss_version', 'cvss_severity', 'kev',
               'ransomware', 'exploited', 'kev_source', 'cpe', 'vendor', 'product', 'vector',
               'epss_change_7d', 'public_exploit', 'ssvc_exploitation', 'ssvc_automatable', 'ssvc_technical_impact',
-              'reason']
+              'reason', 'due_date']
 
 _output_lock = threading.Lock()
 
@@ -901,19 +901,31 @@ def worker(cve_id, cvss_score, epss_score, verbose_print, sem, colored_output, c
         ssvc_active = ssvc_result.get('exploitation') == 'active'
         exploit_maturity_attacked = cvss4_attacked or ssvc_active
 
-        priority = classify(cve_result.get('cvss_baseScore'), epss_result.get('epss'), exploited,
-                            exploit_maturity_attacked, cvss_score, epss_score)
-
+        # The policy decides which exploitation evidence makes a CVE P1+ (all of it by default).
+        # The kev/exploited columns still report the facts either way.
+        rules = policy.current()
         evidence = []
-        if exploited:
+        if exploited and rules['exploitation']['kev']:
             evidence.append(f"listed in KEV ({kev_source})")
-        if cvss4_attacked:
+        if cvss4_attacked and rules['exploitation']['cvss4_attacked']:
             evidence.append("CVSS v4 exploit maturity: Attacked")
-        if ssvc_active:
+        if ssvc_active and rules['exploitation']['ssvc_active']:
             evidence.append("CISA SSVC: active exploitation")
-        reason = build_reason(priority, cve_result.get('cvss_baseScore'), epss_result.get('epss'), cvss_score,
+
+        base_priority = classify(cve_result.get('cvss_baseScore'), epss_result.get('epss'), bool(evidence), False,
+                                 cvss_score, epss_score)
+
+        # Policy minimums, e.g. "a public exploit makes it at least P1" (none by default)
+        epss_change = to_float(epss_result.get('epss_change_7d'))
+        priority, policy_notes = policy.apply_minimums(base_priority, {
+            'public_exploit': bool(public_exploit),
+            'epss_rising': epss_change is not None and epss_change >= EPSS_RISING_DELTA,
+            'ssvc_poc': ssvc_result.get('exploitation') == 'poc',
+        })
+        # The reason explains the base bucket first, then any policy raise
+        reason = build_reason(base_priority, cve_result.get('cvss_baseScore'), epss_result.get('epss'), cvss_score,
                               epss_score, evidence,
-                              signal_notes(public_exploit, epss_result.get('epss_change_7d'), ssvc_result))
+                              policy_notes + signal_notes(public_exploit, epss_change, ssvc_result))
 
         vendor, product = parse_cpe(cve_result.get('cpe'))
         row = {
@@ -936,6 +948,7 @@ def worker(cve_id, cvss_score, epss_score, verbose_print, sem, colored_output, c
             'product': product,
             'vector': cve_result.get('vector') or '',
             'reason': reason,
+            'due_date': policy.due_date(priority),
         }
 
         print_and_write(save_output, row, verbose_print, colored_output)
@@ -980,39 +993,16 @@ def is_valid_cve(cve_id):
 
 
 def parse_report(file, report_type):
-    cve_ids = set()
-    if report_type == 'nessus':
-        try:
-            tree = ET.parse(file)
-            root = tree.getroot()
-            cve_ids.update(
-                cve.text.strip().upper()
-                for report_item in root.findall(".//ReportItem")
-                for cve in report_item.findall("cve")
-                if is_valid_cve(cve.text.strip().upper())
-            )
-            return cve_ids
-        except ET.ParseError as e:
-            click.echo(f"Error parsing XML file: {e}")
-            return []
-        except Exception as e:
-            click.echo(f"An error occurred: {e}")
-            return []
-    elif report_type == 'openvas':
-        try:
-            tree = ET.parse(file)
-            root = tree.getroot()
-            for nvt in root.findall(".//nvt"):
-                # Look for ref elements that have type="cve"
-                for ref in nvt.findall(".//ref[@type='cve']"):
-                    cve = ref.get("id")
-                    if cve:
-                        cve_ids.add(cve.strip())
-            return list(cve_ids)
-        except ET.ParseError as e:
-            print(f"Error parsing XML file: {e}")
-            return []
-        except Exception as e:
-            print(f"An error occurred: {e}")
-            return []
-    return list(cve_ids)
+    """
+    CVE IDs from a Nessus or OpenVAS report. Use scripts.assets for host-level findings.
+    """
+    from scripts.assets import parse_nessus_findings, parse_openvas_findings
+    parsers = {'nessus': parse_nessus_findings, 'openvas': parse_openvas_findings}
+    if report_type not in parsers:
+        return []
+    try:
+        findings = parsers[report_type](file)
+    except ET.ParseError as e:
+        click.echo(f"Error parsing XML file: {e}")
+        return []
+    return sorted({finding['cve_id'] for finding in findings if is_valid_cve(finding['cve_id'])})
